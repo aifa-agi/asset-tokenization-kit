@@ -69,4 +69,3 @@ contract MockUSDT {
         return true;
     }
 }
-EOF
