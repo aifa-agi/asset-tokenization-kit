@@ -150,4 +150,3 @@ contract PropertyToken {
         );
     }
 }
-EOF
