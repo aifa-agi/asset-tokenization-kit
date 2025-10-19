@@ -1,15 +1,94 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// File: @/prisma/schema.prisma
+// Описание: Обновлённая схема с поддержкой изображений активов
+// Изменения: Добавлено поле imageUrl для хранения URL изображения из Vercel Blob
 
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
 
 generator client {
-  provider = "prisma-client-js"
-  output   = "../lib/generated/prisma"
+  provider        = "prisma-client-js"
+  previewFeatures = ["driverAdapters"]
 }
+
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+
+// Модель актива (недвижимость для токенизации)
+model Asset {
+  id              String   @id @default(cuid())
+  contractAddress String   @unique // Адрес смарт-контракта в блокчейне
+  name            String   // Название актива (например, "Домик у моря")
+  description     String?  @db.Text // Описание актива
+  imageUrl        String?  // ← НОВОЕ ПОЛЕ: URL изображения из Vercel Blob
+  totalTokens     Int      // Общее количество токенов (например, 10)
+  pricePerToken   Decimal  @db.Decimal(18, 6) // Цена за 1 токен в USDT
+  currency        String   @default("USDT") // Валюта (по умолчанию USDT)
+  createdBy       String   // Адрес кошелька создателя (администратора)
+  status          String   @default("ACTIVE") // Статус: ACTIVE, SOLD_OUT, ARCHIVED
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+
+  // Связи
+  transactions Transaction[]
+  holders      Holder[]
+
+
+  @@index([contractAddress])
+  @@index([createdBy])
+  @@index([status])
+}
+
+
+// Модель транзакции
+model Transaction {
+  id        String   @id @default(cuid())
+  assetId   String
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  txHash    String   @unique // Hash транзакции в блокчейне
+  from      String   // Адрес отправителя
+  to        String   // Адрес получателя
+  amount    Int      // Количество токенов
+  pricePerToken Decimal @db.Decimal(18, 6) // Цена за токен в момент транзакции
+  type      String   // Тип: CREATE, BUY, SELL, TRANSFER
+  status    String   @default("PENDING") // Статус: PENDING, CONFIRMED, FAILED
+  blockNumber Int?   // Номер блока
+  gasUsed   String?  // Использованный газ
+  createdAt DateTime @default(now())
+  confirmedAt DateTime? // Время подтверждения транзакции
+
+
+  @@index([assetId])
+  @@index([from])
+  @@index([to])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
+}
+
+
+// Модель владельца токенов
+model Holder {
+  id        String   @id @default(cuid())
+  assetId   String
+  asset     Asset    @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  address   String   // Адрес кошелька владельца
+  balance   Int      // Текущий баланс токенов
+  updatedAt DateTime @updatedAt
+
+
+  @@unique([assetId, address]) // Один holder может владеть токенами только одного актива
+  @@index([address])
+  @@index([assetId, balance])
+}
+
+
+// Модель для отслеживания последнего обработанного блока (для синхронизации с блокчейном)
+model SyncStatus {
+  id            String   @id @default(cuid())
+  chainId       Int      @unique // ID сети (например, 11155111 для Sepolia)
+  lastBlock     BigInt   @default(0) // Последний обработанный блок
+  lastSyncAt    DateTime @updatedAt
 }
