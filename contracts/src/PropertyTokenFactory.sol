@@ -60,4 +60,3 @@ contract PropertyTokenFactory {
         return tokenBySymbol[symbol] != address(0);
     }
 }
-EOF
