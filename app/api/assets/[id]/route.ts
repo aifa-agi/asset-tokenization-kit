@@ -2,17 +2,19 @@
 // Описание: API endpoint для получения одного актива по ID или contractAddress
 // URL: /api/assets/cuid123 или /api/assets/0x...
 // Возвращает: Объект Asset с transactions и holders
-
+// ОБНОВЛЕНО ДЛЯ NEXT.JS 15 (async params)
 
 import { NextRequest, NextResponse } from 'next/server'
 import prisma from '@/lib/db/prisma'
 
+// ✅ ИСПРАВЛЕНО: params теперь Promise<{ id: string }>
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    // ✅ Await params перед использованием
+    const { id } = await params
     
     console.log('📥 Fetching asset:', id)
     
@@ -63,13 +65,14 @@ export async function GET(
   }
 }
 
-// PUT endpoint для обновления актива (опционально)
+// ✅ ИСПРАВЛЕНО: PUT endpoint с async params
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
-    const { id } = params
+    // ✅ Await params перед использованием
+    const { id } = await params
     const body = await request.json()
     
     console.log('📥 Updating asset:', id, body)
