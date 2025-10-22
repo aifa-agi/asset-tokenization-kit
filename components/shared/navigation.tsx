@@ -110,8 +110,7 @@ export function Navigation() {
                   
                 </div>
               )}
-
-              <ConnectButton />
+<ConnectButton />
             </div>
           </div>
 
