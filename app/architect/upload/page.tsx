@@ -1,6 +1,5 @@
-// File: @/app/architect/upload/page.tsx
-// ПОЛНАЯ ИСПРАВЛЕННАЯ ВЕРСИЯ с локальной компиляцией
-
+// File: app/architect/upload/page.tsx
+// Client: auto-selects upload endpoint based on NODE_ENV
 
 'use client'
 
@@ -30,16 +29,23 @@ interface UploadedFile {
 
 type UploadStatus = 'idle' | 'uploading' | 'success' | 'error'
 
+// Helper: choose endpoint based on NODE_ENV
+function getUploadEndpoint() {
+  return process.env.NODE_ENV === 'production'
+    ? '/api/contracts/upload-github'
+    : '/api/contracts/upload-local'
+}
+
 export default function ArchitectUploadPage() {
   const [files, setFiles] = useState<UploadedFile[]>([])
   const [uploadStatus, setUploadStatus] = useState<UploadStatus>('idle')
   const [error, setError] = useState<string | null>(null)
 
-  // Обработка выбора файлов
+  const uploadEndpoint = getUploadEndpoint()
+  const isProd = process.env.NODE_ENV === 'production'
+
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || [])
-    
-    // Фильтруем только .sol файлы
     const solFiles = selectedFiles.filter(f => f.name.endsWith('.sol'))
     
     if (solFiles.length === 0) {
@@ -51,23 +57,16 @@ export default function ArchitectUploadPage() {
       toast.warning(`Ignored ${selectedFiles.length - solFiles.length} non-Solidity files`)
     }
 
-    // Читаем содержимое файлов
     const uploadedFiles: UploadedFile[] = []
-
     for (const file of solFiles) {
       const content = await file.text()
-      uploadedFiles.push({
-        name: file.name,
-        size: file.size,
-        content,
-      })
+      uploadedFiles.push({ name: file.name, size: file.size, content })
     }
 
     setFiles(uploadedFiles)
     toast.success(`${uploadedFiles.length} file(s) selected`)
   }
 
-  // Upload в GitHub
   const handleUpload = async () => {
     if (files.length === 0) {
       toast.error('Please select files first')
@@ -77,11 +76,11 @@ export default function ArchitectUploadPage() {
     setUploadStatus('uploading')
     setError(null)
 
-    const toastId = toast.loading('Uploading contracts to GitHub...')
+    const toastId = toast.loading(`Uploading to ${isProd ? 'GitHub' : 'local filesystem'}...`)
 
     try {
-      // Шаг 1: Upload в GitHub
-      const uploadResponse = await fetch('/api/contracts/upload', {
+      // Upload files
+      const uploadResponse = await fetch(uploadEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ files }),
@@ -93,11 +92,10 @@ export default function ArchitectUploadPage() {
       }
 
       const uploadData = await uploadResponse.json()
-
-      toast.success('Contracts uploaded to GitHub!', { id: toastId })
+      toast.success(`Uploaded to ${isProd ? 'GitHub' : 'filesystem'}!`, { id: toastId })
       console.log('✅ Upload result:', uploadData)
 
-      // Шаг 2: Автоматически запускаем компиляцию
+      // Compile
       setTimeout(() => {
         startCompilation()
       }, 1000)
@@ -110,12 +108,10 @@ export default function ArchitectUploadPage() {
     }
   }
 
-  // Запуск компиляции (автоматически после upload)
   const startCompilation = async () => {
-    toast.loading('Starting compilation...', { id: 'compile' })
+    toast.loading('Compiling contracts...', { id: 'compile' })
 
     try {
-      // ✅ ИСПРАВЛЕНО: Используем локальную компиляцию
       const response = await fetch('/api/contracts/compile-local', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -134,13 +130,10 @@ export default function ArchitectUploadPage() {
       }
 
       const data = await response.json()
-
       setUploadStatus('success')
-      toast.success('Contracts compiled successfully!', { id: 'compile' })
-      
+      toast.success('Compiled successfully!', { id: 'compile' })
       console.log('✅ Compilation result:', data)
 
-      // Перенаправляем на deploy страницу
       setTimeout(() => {
         window.location.href = '/architect/deploy'
       }, 2000)
@@ -153,7 +146,6 @@ export default function ArchitectUploadPage() {
     }
   }
 
-  // Сброс
   const resetUpload = () => {
     setFiles([])
     setUploadStatus('idle')
@@ -162,22 +154,19 @@ export default function ArchitectUploadPage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <div className="bg-white shadow-sm border-b">
         <div className="max-w-5xl mx-auto px-4 py-4">
           <h1 className="text-2xl font-bold text-gray-900">
             🏗️ Architect: Upload Contracts
           </h1>
           <p className="text-gray-600 text-sm mt-1">
-            Upload Solidity contracts to start the deployment process
+            Upload Solidity contracts to start deployment
           </p>
         </div>
       </div>
 
-      {/* Content */}
       <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
         
-        {/* Information Card */}
         <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-blue-900">
@@ -189,29 +178,28 @@ export default function ArchitectUploadPage() {
             <ol className="space-y-2 text-sm text-blue-800">
               <li className="flex gap-2">
                 <span className="font-bold">1.</span>
-                <span>Upload your Solidity contracts (.sol files)</span>
+                <span>Upload .sol files</span>
               </li>
               <li className="flex gap-2">
                 <span className="font-bold">2.</span>
-                <span>Contracts are saved to GitHub repository</span>
+                <span>Saved to {isProd ? 'GitHub repository' : 'local filesystem'}</span>
               </li>
               <li className="flex gap-2">
                 <span className="font-bold">3.</span>
-                <span>Automatic compilation using solc-js</span>
+                <span>Automatic compilation (solc-js)</span>
               </li>
               <li className="flex gap-2">
                 <span className="font-bold">4.</span>
-                <span>Compiled contracts saved back to GitHub</span>
+                <span>Compiled artifacts saved {isProd ? 'to GitHub' : 'locally'}</span>
               </li>
               <li className="flex gap-2">
                 <span className="font-bold">5.</span>
-                <span>Ready to deploy to Sepolia testnet</span>
+                <span>Ready to deploy to Sepolia</span>
               </li>
             </ol>
           </CardContent>
         </Card>
 
-        {/* Upload Card */}
         <Card>
           <CardHeader>
             <CardTitle>Upload Smart Contracts</CardTitle>
@@ -221,7 +209,6 @@ export default function ArchitectUploadPage() {
           </CardHeader>
           <CardContent className="space-y-6">
             
-            {/* File Input */}
             <div>
               <label className="block mb-2 text-sm font-medium text-gray-700">
                 Select Contracts
@@ -241,11 +228,13 @@ export default function ArchitectUploadPage() {
                   disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <p className="mt-2 text-xs text-gray-500">
-                Required files: PropertyToken.sol, PropertyTokenFactory.sol, MockUSDT.sol
+                Required: PropertyToken.sol, PropertyTokenFactory.sol, MockUSDT.sol
+              </p>
+              <p className="mt-1 text-[11px] text-gray-400">
+                Endpoint: {uploadEndpoint} ({isProd ? 'production' : 'development'})
               </p>
             </div>
 
-            {/* Files List */}
             {files.length > 0 && (
               <div className="space-y-2">
                 <h3 className="text-sm font-medium text-gray-700">
@@ -275,7 +264,6 @@ export default function ArchitectUploadPage() {
               </div>
             )}
 
-            {/* Action Buttons */}
             <div className="flex gap-3">
               <Button
                 onClick={handleUpload}
@@ -290,7 +278,7 @@ export default function ArchitectUploadPage() {
                 ) : uploadStatus === 'success' ? (
                   <>
                     <CheckCircle className="h-4 w-4" />
-                    Uploaded ✓
+                    Done ✓
                   </>
                 ) : (
                   <>
@@ -307,18 +295,16 @@ export default function ArchitectUploadPage() {
               )}
             </div>
 
-            {/* Error Display */}
             {error && (
               <div className="p-4 bg-red-50 border border-red-200 rounded-md">
                 <p className="text-sm text-red-800">{error}</p>
               </div>
             )}
 
-            {/* Success Message */}
             {uploadStatus === 'success' && (
               <div className="p-4 bg-green-50 border border-green-200 rounded-md">
                 <p className="text-sm text-green-800 font-medium">
-                  ✅ Contracts uploaded and compiled successfully!
+                  ✅ Uploaded and compiled successfully!
                 </p>
                 <p className="text-xs text-green-700 mt-1">
                   Redirecting to deployment page...
@@ -327,28 +313,6 @@ export default function ArchitectUploadPage() {
             )}
           </CardContent>
         </Card>
-
-        {/* Debug Info */}
-        {process.env.NODE_ENV === 'development' && files.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">Debug Info</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <pre className="text-xs bg-gray-100 p-3 rounded overflow-auto max-h-40">
-                {JSON.stringify(
-                  files.map(f => ({
-                    name: f.name,
-                    size: f.size,
-                    lines: f.content.split('\n').length,
-                  })),
-                  null,
-                  2
-                )}
-              </pre>
-            </CardContent>
-          </Card>
-        )}
       </div>
     </div>
   )

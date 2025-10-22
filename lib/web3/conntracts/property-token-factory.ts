@@ -1,12 +1,11 @@
 // File: @/lib/web3/contracts/property-token-factory.ts
-// Описание: ABI контракта PropertyTokenFactory
-// Используется для создания новых токенов недвижимости
-
+// Description: ABI for PropertyTokenFactory contract
+// Updated: Added missing parameters (imageURI, usdt, treasury) to createToken
 
 /**
  * ABI PropertyTokenFactory контракта
  * Функции:
- * - createToken: Создание нового токена для домика
+ * - createToken: Создание нового токена для домика (8 параметров)
  * - getAllTokens: Получение всех созданных токенов
  * - tokenBySymbol: Поиск токена по символу
  * - totalTokens: Количество созданных токенов
@@ -62,11 +61,14 @@ export const propertyTokenFactoryABI = [
     name: 'createToken',
     stateMutability: 'nonpayable',
     inputs: [
-      { type: 'string', name: 'name' },
-      { type: 'string', name: 'symbol' },
-      { type: 'uint256', name: 'maxSupply' },
-      { type: 'uint256', name: 'pricePerToken' },
-      { type: 'string', name: 'description' },
+      { type: 'string', name: '_name' },
+      { type: 'string', name: '_symbol' },
+      { type: 'uint256', name: '_maxSupply' },
+      { type: 'uint256', name: '_pricePerTokenUSDT' },
+      { type: 'string', name: '_description' },
+      { type: 'string', name: '_imageURI' },          // ✅ ДОБАВЛЕНО
+      { type: 'address', name: '_usdt' },             // ✅ ДОБАВЛЕНО
+      { type: 'address', name: '_treasury' },         // ✅ ДОБАВЛЕНО
     ],
     outputs: [{ type: 'address', name: 'newToken' }],
   },
@@ -80,7 +82,7 @@ export const propertyTokenFactoryABI = [
       { type: 'string', indexed: false, name: 'name' },
       { type: 'string', indexed: false, name: 'symbol' },
       { type: 'uint256', indexed: false, name: 'maxSupply' },
-      { type: 'uint256', indexed: false, name: 'pricePerToken' },
+      { type: 'uint256', indexed: false, name: 'pricePerTokenUSDT' },
       { type: 'address', indexed: true, name: 'creator' },
       { type: 'uint256', indexed: false, name: 'timestamp' },
     ],

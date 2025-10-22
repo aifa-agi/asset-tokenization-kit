@@ -1,6 +1,6 @@
 // File: @/app/api/upload-image/route.ts
-// Описание: Загрузка изображений в Vercel Blob
-
+// Description: Upload images to Vercel Blob with unique filenames
+// FIXED: Added addRandomSuffix to prevent duplicate filenames
 
 import { NextRequest, NextResponse } from 'next/server'
 import { put } from '@vercel/blob'
@@ -33,10 +33,11 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Загрузка в Vercel Blob
+    // ✅ ИСПРАВЛЕНО: Добавлен addRandomSuffix для уникальных имён
     const blob = await put(file.name, file, {
       access: 'public',
       token: process.env.BLOB_READ_WRITE_TOKEN,
+      addRandomSuffix: true,  // ✅ Генерирует уникальное имя (image.jpg → image-abc123.jpg)
     })
 
     console.log('✅ Image uploaded to Vercel Blob:', blob.url)

@@ -1,29 +1,27 @@
-// File: @/hooks/use-property-token-factory.ts
-// Описание: React хук для работы с PropertyTokenFactory контрактом
-// Предоставляет функции: createToken, getAllTokens, tokenBySymbol
-// Используется админом для создания новых токенов недвижимости
-
+// File: @/lib/hooks/use-property-token-factory.ts
+// Description: React hook for PropertyTokenFactory contract
+// Fixed: Added imageURI, usdt, treasury parameters to createToken
 
 import { useReadContract, useWriteContract, useWaitForTransactionReceipt, usePublicClient } from 'wagmi'
-import { Address, decodeEventLog } from 'viem'
+import { Address, decodeEventLog, parseEther } from 'viem'
 import { useState, useEffect } from 'react'
 import { propertyTokenFactoryABI } from '../web3/conntracts/property-token-factory'
 import { CONTRACTS } from '../web3/conntracts/addresses'
 
 /**
- * Параметры для создания нового токена
+ * Parameters for creating a new property token
  */
 export interface CreateTokenParams {
-  name: string           // Название (например "Домик у моря")
-  symbol: string         // Символ (например "HOUSE1")
-  maxSupply: string      // Макс. количество токенов (например "10")
-  pricePerToken: string  // Цена за токен в USDT (например "1.0")
-  description: string    // Описание домика
+  name: string           // Name (e.g. "Beach House")
+  symbol: string         // Symbol (e.g. "BEACH")
+  maxSupply: string      // Max tokens (e.g. "10")
+  pricePerToken: string  // Price per token in USDT (e.g. "1.0")
+  description: string    // Description
+  imageURI?: string      // ✅ Image URL (optional)
 }
 
 /**
- * Хук для работы с PropertyTokenFactory
- * @returns Объект с функциями и данными Factory
+ * Hook for working with PropertyTokenFactory
  */
 export function usePropertyTokenFactory() {
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>()
@@ -32,7 +30,6 @@ export function usePropertyTokenFactory() {
   
   // ==================== READ FUNCTIONS ====================
   
-  // 1. Общее количество созданных токенов
   const { 
     data: totalTokens,
     isLoading: isTotalTokensLoading,
@@ -44,7 +41,6 @@ export function usePropertyTokenFactory() {
     query: { staleTime: 30_000 },
   })
   
-  // 2. Все созданные токены (массив адресов)
   const { 
     data: allTokens,
     isLoading: isAllTokensLoading,
@@ -56,7 +52,6 @@ export function usePropertyTokenFactory() {
     query: { staleTime: 30_000 },
   })
   
-  // 3. Проверка существования токена по символу
   const checkTokenExists = async (symbol: string): Promise<boolean> => {
     try {
       const result = await publicClient?.readContract({
@@ -72,7 +67,6 @@ export function usePropertyTokenFactory() {
     }
   }
   
-  // 4. Получить адрес токена по символу
   const getTokenBySymbol = async (symbol: string): Promise<Address | null> => {
     try {
       const result = await publicClient?.readContract({
@@ -84,7 +78,6 @@ export function usePropertyTokenFactory() {
       
       const address = result as Address
       
-      // Проверка что адрес не нулевой (токен существует)
       if (address === '0x0000000000000000000000000000000000000000') {
         return null
       }
@@ -104,7 +97,6 @@ export function usePropertyTokenFactory() {
     error: writeError 
   } = useWriteContract()
   
-  // Ожидание подтверждения транзакции
   const { 
     isLoading: isConfirming,
     isSuccess: isConfirmed,
@@ -114,11 +106,10 @@ export function usePropertyTokenFactory() {
     hash: txHash,
   })
   
-  // Парсинг события TokenCreated для получения адреса нового токена
+  // Parse TokenCreated event to get new token address
   useEffect(() => {
     if (isConfirmed && receipt) {
       try {
-        // Ищем событие TokenCreated в логах транзакции
         const tokenCreatedLog = receipt.logs.find(log => {
           try {
             const decoded = decodeEventLog({
@@ -141,20 +132,13 @@ export function usePropertyTokenFactory() {
           
           if (decoded.eventName === 'TokenCreated') {
             const tokenAddress = decoded.args.tokenAddress
-            console.log('✅ Новый токен создан:', tokenAddress)
+            console.log('✅ New token created:', tokenAddress)
             setNewTokenAddress(tokenAddress)
           }
         }
         
-        // Обновляем списки
         refetchTotalTokens()
         refetchAllTokens()
-        
-        // Сброс через 5 секунд
-        setTimeout(() => {
-          setTxHash(undefined)
-          setNewTokenAddress(null)
-        }, 5000)
         
       } catch (error) {
         console.error('Error parsing TokenCreated event:', error)
@@ -165,13 +149,11 @@ export function usePropertyTokenFactory() {
   // ==================== CREATE TOKEN FUNCTION ====================
   
   /**
-   * Создать новый PropertyToken контракт
-   * @param params - Параметры токена (название, символ, количество, цена, описание)
-   * @returns Transaction hash
+   * Create new PropertyToken contract
    */
   const createToken = async (params: CreateTokenParams): Promise<`0x${string}`> => {
     try {
-      // Валидация параметров
+      // Validation
       if (!params.name || params.name.length < 3) {
         throw new Error('Название должно быть минимум 3 символа')
       }
@@ -190,24 +172,34 @@ export function usePropertyTokenFactory() {
         throw new Error('Цена должна быть > 0')
       }
       
-      // Проверка существования символа
+      // Check if symbol already exists
       const exists = await checkTokenExists(params.symbol.toUpperCase())
       if (exists) {
         throw new Error(`Токен с символом ${params.symbol} уже существует`)
       }
       
-      // Конвертация цены в wei (USDT имеет 6 decimals)
-      const priceInWei = BigInt(Math.floor(priceNum * 1_000_000)) // 6 decimals
+      // ✅ Convert maxSupply to wei (18 decimals for ERC20)
+      const maxSupplyInWei = parseEther(params.maxSupply)
       
-      console.log('🚀 Создание токена:', {
+      // Convert price to wei (USDT has 6 decimals)
+      const priceInWei = BigInt(Math.floor(priceNum * 1_000_000))
+      
+      // ✅ Get contract addresses
+      const usdtAddress = CONTRACTS.mockUSDT
+      const treasuryAddress = CONTRACTS.treasury
+      
+      console.log('🚀 Creating token:', {
         name: params.name,
         symbol: params.symbol.toUpperCase(),
-        maxSupply: BigInt(maxSupplyNum),
-        pricePerToken: priceInWei,
+        maxSupply: maxSupplyInWei.toString(),
+        pricePerToken: priceInWei.toString(),
         description: params.description,
+        imageURI: params.imageURI || '',
+        usdt: usdtAddress,
+        treasury: treasuryAddress,
       })
       
-      // Вызов createToken в Factory контракте
+      // ✅ Call createToken with all 8 parameters
       const hash = await writeContractAsync({
         address: CONTRACTS.propertyTokenFactory,
         abi: propertyTokenFactoryABI,
@@ -215,27 +207,36 @@ export function usePropertyTokenFactory() {
         args: [
           params.name,
           params.symbol.toUpperCase(),
-          BigInt(maxSupplyNum),
+          maxSupplyInWei,
           priceInWei,
           params.description,
+          params.imageURI || '',
+          usdtAddress,
+          treasuryAddress,
         ],
       })
       
-      console.log('📤 Транзакция отправлена:', hash)
+      console.log('📤 Transaction sent:', hash)
       setTxHash(hash)
       return hash
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ Create token error:', error)
+      
+      // Better error messages
+      if (error.message?.includes('User rejected')) {
+        throw new Error('Транзакция отклонена пользователем')
+      }
+      if (error.message?.includes('insufficient funds')) {
+        throw new Error('Недостаточно ETH для gas')
+      }
+      
       throw error
     }
   }
   
   // ==================== HELPER FUNCTIONS ====================
   
-  /**
-   * Получить токен по индексу
-   */
   const getTokenByIndex = async (index: number): Promise<Address | null> => {
     try {
       const result = await publicClient?.readContract({
@@ -251,9 +252,6 @@ export function usePropertyTokenFactory() {
     }
   }
   
-  /**
-   * Сбросить состояние создания токена
-   */
   const reset = () => {
     setTxHash(undefined)
     setNewTokenAddress(null)
@@ -262,44 +260,43 @@ export function usePropertyTokenFactory() {
   // ==================== RETURN ====================
   
   return {
-    // Данные Factory
+    // Factory data
     totalTokens: totalTokens ? Number(totalTokens) : 0,
     allTokens: (allTokens as Address[]) || [],
     
-    // Функции создания
+    // Create functions
     createToken,
     
-    // Функции чтения
+    // Read functions
     checkTokenExists,
     getTokenBySymbol,
     getTokenByIndex,
     
-    // Статус создания токена
+    // Token creation status
     isCreating: isWritePending || isConfirming,
     isWritePending,
     isConfirming,
     isConfirmed,
     
-    // Результат создания
+    // Creation result
     txHash,
     newTokenAddress,
     
-    // Ошибки
+    // Errors
     writeError,
     confirmError,
     error: writeError || confirmError,
     
-    // Статус загрузки
+    // Loading status
     isLoading: isTotalTokensLoading || isAllTokensLoading,
     
-    // Refetch функции
+    // Refetch functions
     refetchTotalTokens,
     refetchAllTokens,
     
-    // Утилиты
+    // Utilities
     reset,
   }
 }
 
-// TypeScript типы для возвращаемого значения
 export type UsePropertyTokenFactoryReturn = ReturnType<typeof usePropertyTokenFactory>

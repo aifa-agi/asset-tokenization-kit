@@ -1,8 +1,5 @@
-// File: @/providers/Web3Provider.tsx
-// Описание: Финальный Provider с исправленной темой и правильными хуками.
-// Theme теперь использует правильный enum для borderRadius.
-// Экспортируем только базовые хуки + отдельно контрактные хуки для ясности.
-// Контрактные хуки импортируются из 'wagmi' напрямую в компонентах.
+// File: @/providers/web-3-provider.tsx
+// ИСПРАВЛЕНО: Обновлённый provider с правильной конфигурацией
 
 'use client'
 
@@ -29,15 +26,12 @@ import {
 import { ReactNode, useEffect } from 'react'
 import { sepolia } from 'wagmi/chains'
 
-// Обязательный CSS
 import '@rainbow-me/rainbowkit/styles.css'
 
-// Interface для props
 interface Web3ProviderProps {
   children: ReactNode
 }
 
-// Компонент автоподключения
 function AutoConnectWallet() {
   const { isConnected } = useAccount()
   const { connect, connectors } = useConnect()
@@ -49,11 +43,11 @@ function AutoConnectWallet() {
       const savedData = localStorage.getItem('wagmi.store')
       if (savedData) {
         const parsed = JSON.parse(savedData)
-        const savedConnectorId = parsed.state?.selectedConnectorId
+        const savedConnectorId = parsed.state?.connections?.value?.[0]?.connector
         
         if (savedConnectorId) {
           const savedConnector = connectors.find(
-            connector => connector.uid === savedConnectorId
+            connector => connector.id === savedConnectorId
           )
           
           if (savedConnector) {
@@ -70,7 +64,6 @@ function AutoConnectWallet() {
   return null
 }
 
-// Кастомный хук Web3 статуса (без изменений)
 export function useWeb3Status() {
   const { 
     address, 
@@ -82,20 +75,20 @@ export function useWeb3Status() {
   const publicClient = usePublicClient({ 
     chainId: chainId || sepolia.id 
   })
-  const walletClient = useWalletClient({ 
+  const { data: walletClient } = useWalletClient({ 
     chainId: chainId || sepolia.id 
   })
   const { disconnect } = useDisconnect()
   
   const isCorrectChain = chainId === sepolia.id
-  const isReady = isConnected && isCorrectChain && publicClient && walletClient
+  const isReady = isConnected && isCorrectChain && !!publicClient && !!walletClient
   
   const networkName = chain?.name || 'Unknown'
   const explorerUrl = chain?.blockExplorers?.default.url || 'https://sepolia.etherscan.io'
   
   const switchToSepolia = async () => {
     if (typeof window === 'undefined' || !window.ethereum) {
-      alert('Установите MetaMask или другой Web3 кошелёк!')
+      alert('Установите MetaMask!')
       return
     }
     
@@ -128,7 +121,7 @@ export function useWeb3Status() {
           console.log('✅ Sepolia добавлена!')
         } catch (addError) {
           console.error('❌ Ошибка добавления Sepolia:', addError)
-          alert('Ошибка добавления Sepolia сети')
+          alert('Ошибка добавления Sepolia')
         }
       } else {
         console.error('❌ Ошибка переключения:', switchError)
@@ -152,17 +145,15 @@ export function useWeb3Status() {
   }
 }
 
-// Главный провайдер (ИСПРАВЛЕННАЯ тема)
 export function Web3Provider({ children }: Web3ProviderProps) {
   return (
     <WagmiProvider config={config}>
       <QueryClientProvider client={queryClient}>
         <RainbowKitProvider
-          // ИСПРАВЛЕНО: правильный enum для borderRadius
           theme={lightTheme({
             accentColor: rainbowTheme.lightMode.accentColor,
             accentColorForeground: rainbowTheme.lightMode.accentColorForeground,
-            borderRadius: 'medium', // Enum значение для RainbowKit v2
+            borderRadius: 'medium',
           })}
           initialChain={sepolia}
         >
@@ -174,7 +165,6 @@ export function Web3Provider({ children }: Web3ProviderProps) {
   )
 }
 
-// БАЗОВЫЕ хуки (экспортируем только то, что точно есть в wagmi)
 export { 
   useAccount,
   useConnect, 
@@ -182,5 +172,3 @@ export {
   usePublicClient, 
   useWalletClient,
 }
-
-

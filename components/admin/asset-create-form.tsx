@@ -1,12 +1,10 @@
 // File: @/components/admin/asset-create-form.tsx
-// Описание: Форма для создания нового токена недвижимости
-// Шаги: 1) Загрузка изображения, 2) Создание токена в blockchain, 3) Сохранение в БД
-
+// Description: Complete form for creating new property tokens
+// Features: Image upload, blockchain deployment, DB save, auto-redirect
 
 'use client'
 
-import { useState } from 'react'
-
+import { useState, useEffect } from 'react'
 import { useWeb3Status } from '@/providers/web-3-provider'
 import { toast } from 'sonner'
 import { CreateTokenParams, usePropertyTokenFactory } from '@/lib/hooks/use-property-token-factory'
@@ -23,20 +21,20 @@ export function AssetCreateForm() {
     reset,
   } = usePropertyTokenFactory()
 
-  // Состояние формы
   const [formData, setFormData] = useState<CreateTokenParams>({
     name: '',
     symbol: '',
     maxSupply: '',
     pricePerToken: '',
     description: '',
+    imageURI: '',  // ✅ Добавлено
   })
 
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
 
-  // Обработка изменения полей формы
   const handleChange = (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
   ) => {
@@ -44,18 +42,15 @@ export function AssetCreateForm() {
     setFormData(prev => ({ ...prev, [name]: value }))
   }
 
-  // Обработка загрузки изображения
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // Проверка размера (макс 5MB)
     if (file.size > 5 * 1024 * 1024) {
       toast.error('Размер изображения не должен превышать 5MB')
       return
     }
 
-    // Проверка типа
     if (!file.type.startsWith('image/')) {
       toast.error('Выберите файл изображения')
       return
@@ -63,7 +58,6 @@ export function AssetCreateForm() {
 
     setImageFile(file)
 
-    // Создание preview
     const reader = new FileReader()
     reader.onloadend = () => {
       setImagePreview(reader.result as string)
@@ -71,7 +65,6 @@ export function AssetCreateForm() {
     reader.readAsDataURL(file)
   }
 
-  // Обработка отправки формы
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -80,16 +73,15 @@ export function AssetCreateForm() {
       return
     }
 
-    // Валидация
     if (!formData.name || !formData.symbol || !formData.maxSupply || !formData.pricePerToken) {
       toast.error('Заполните все обязательные поля')
       return
     }
 
     try {
-      // Шаг 1: Загрузка изображения (если есть)
       let imageUrl: string | null = null
 
+      // Шаг 1: Загрузка изображения
       if (imageFile) {
         toast.loading('Загрузка изображения...', { id: 'image-upload' })
 
@@ -107,6 +99,7 @@ export function AssetCreateForm() {
 
         const uploadData = await uploadRes.json()
         imageUrl = uploadData.url
+        setUploadedImageUrl(imageUrl)
 
         toast.success('Изображение загружено', { id: 'image-upload' })
       }
@@ -114,13 +107,14 @@ export function AssetCreateForm() {
       // Шаг 2: Создание токена в blockchain
       toast.loading('Создание токена в blockchain...', { id: 'create-token' })
 
-      const hash = await createToken(formData)
+      // ✅ ИСПРАВЛЕНО: передаём imageURI в hook
+      const hash = await createToken({
+        ...formData,
+        imageURI: imageUrl || '',
+      })
 
       toast.success('Транзакция отправлена', { id: 'create-token' })
       toast.loading('Ожидание подтверждения...', { id: 'confirm' })
-
-      // Ждём подтверждения (через useEffect в хуке)
-      // После подтверждения newTokenAddress будет установлен
 
     } catch (err: any) {
       console.error('Create asset error:', err)
@@ -131,7 +125,13 @@ export function AssetCreateForm() {
     }
   }
 
-  // Сохранение в БД после подтверждения транзакции
+  // Автосохранение в БД после подтверждения
+  useEffect(() => {
+    if (isConfirmed && newTokenAddress && !isSaving) {
+      saveToDatabase()
+    }
+  }, [isConfirmed, newTokenAddress])
+
   const saveToDatabase = async () => {
     if (!newTokenAddress) return
 
@@ -149,7 +149,7 @@ export function AssetCreateForm() {
           description: formData.description,
           totalTokens: parseInt(formData.maxSupply),
           pricePerToken: parseFloat(formData.pricePerToken),
-          imageUrl: imagePreview, // Временно используем preview (потом будет Vercel Blob)
+          imageUrl: uploadedImageUrl,
           createdBy: address,
         }),
       })
@@ -163,19 +163,12 @@ export function AssetCreateForm() {
       toast.success('Актив успешно создан!', { id: 'save-db' })
       toast.dismiss('confirm')
 
-      // Сброс формы
-      setFormData({
-        name: '',
-        symbol: '',
-        maxSupply: '',
-        pricePerToken: '',
-        description: '',
-      })
-      setImageFile(null)
-      setImagePreview(null)
-      reset()
-
       console.log('✅ Актив создан:', asset)
+
+      // ✅ ДОБАВЛЕНО: Автоматический редирект через 2 секунды
+      setTimeout(() => {
+        window.location.href = '/admin'
+      }, 2000)
 
     } catch (err: any) {
       console.error('Save to DB error:', err)
@@ -185,29 +178,63 @@ export function AssetCreateForm() {
     }
   }
 
-  // Автосохранение в БД после подтверждения
-  if (isConfirmed && newTokenAddress && !isSaving) {
-    saveToDatabase()
+  const handleReset = () => {
+    setFormData({
+      name: '',
+      symbol: '',
+      maxSupply: '',
+      pricePerToken: '',
+      description: '',
+      imageURI: '',
+    })
+    setImageFile(null)
+    setImagePreview(null)
+    setUploadedImageUrl(null)
+    reset()
   }
 
   return (
     <div className="max-w-2xl mx-auto p-6 bg-white rounded-lg shadow-md">
-      <h2 className="text-2xl font-bold mb-6">Создать новый актив</h2>
+      <h2 className="text-2xl font-bold text-gray-900 mb-6">
+        Создать новый актив недвижимости
+      </h2>
 
       <form onSubmit={handleSubmit} className="space-y-6">
+        
         {/* Изображение */}
         <div>
-          <label className="block text-sm font-medium mb-2">
-            Изображение домика
+          <label className="block text-sm font-semibold text-gray-900 mb-2">
+            🖼️ Изображение объекта недвижимости
           </label>
 
-          {imagePreview && (
-            <div className="mb-4">
+          {imagePreview ? (
+            <div className="mb-4 relative">
               <img
                 src={imagePreview}
                 alt="Preview"
-                className="w-full h-48 object-cover rounded-lg"
+                className="w-full h-48 object-cover rounded-lg border-2 border-gray-200"
               />
+              <button
+                type="button"
+                onClick={() => {
+                  setImageFile(null)
+                  setImagePreview(null)
+                  setUploadedImageUrl(null)
+                }}
+                className="absolute top-2 right-2 bg-red-500 text-white px-3 py-1 rounded-md text-sm hover:bg-red-600"
+              >
+                Удалить
+              </button>
+            </div>
+          ) : (
+            <div className="mb-4 border-2 border-dashed border-gray-300 rounded-lg p-8 text-center bg-gray-50">
+              <div className="text-4xl mb-2">🏠</div>
+              <p className="text-sm text-gray-600 mb-2">
+                Нажмите, чтобы выбрать изображение
+              </p>
+              <p className="text-xs text-gray-500">
+                PNG, JPG до 5MB
+              </p>
             </div>
           )}
 
@@ -215,131 +242,175 @@ export function AssetCreateForm() {
             type="file"
             accept="image/*"
             onChange={handleImageChange}
-            className="block w-full text-sm text-gray-500
+            className="block w-full text-sm text-gray-700 bg-white border border-gray-300 rounded-md
               file:mr-4 file:py-2 file:px-4
               file:rounded-md file:border-0
               file:text-sm file:font-semibold
               file:bg-emerald-50 file:text-emerald-700
-              hover:file:bg-emerald-100"
+              hover:file:bg-emerald-100 cursor-pointer"
           />
-          <p className="mt-1 text-xs text-gray-500">
-            Рекомендуемый размер: 800x600px, макс 5MB
+          <p className="mt-2 text-xs text-gray-500">
+            💡 Рекомендуемый размер: 800x600px, макс 5MB
           </p>
         </div>
 
         {/* Название */}
         <div>
-          <label className="block text-sm font-medium mb-2">
-            Название актива *
+          <label className="block text-sm font-semibold text-gray-900 mb-2">
+            🏷️ Название объекта <span className="text-red-500">*</span>
           </label>
           <input
             type="text"
             name="name"
             value={formData.name}
             onChange={handleChange}
-            placeholder="Домик у моря"
+            placeholder="Например: Домик у моря"
             required
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-emerald-500"
+            className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-md 
+              focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500
+              placeholder:text-gray-400"
           />
+          <p className="mt-1 text-xs text-gray-500">
+            💡 Это название будет видно инвесторам
+          </p>
         </div>
 
         {/* Символ */}
         <div>
-          <label className="block text-sm font-medium mb-2">
-            Символ токена *
+          <label className="block text-sm font-semibold text-gray-900 mb-2">
+            🔖 Символ токена <span className="text-red-500">*</span>
           </label>
           <input
             type="text"
             name="symbol"
             value={formData.symbol}
             onChange={handleChange}
-            placeholder="HOUSE1"
+            placeholder="Например: BEACH"
             required
             maxLength={10}
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-emerald-500 uppercase"
+            className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-md 
+              focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500
+              placeholder:text-gray-400 uppercase"
           />
           <p className="mt-1 text-xs text-gray-500">
-            Уникальный идентификатор (например HOUSE1, APT2)
+            💡 Уникальный код (BEACH, MTN, APT1). До 10 символов
           </p>
         </div>
 
         {/* Количество токенов */}
         <div>
-          <label className="block text-sm font-medium mb-2">
-            Количество токенов *
+          <label className="block text-sm font-semibold text-gray-900 mb-2">
+            🎯 Общее количество токенов <span className="text-red-500">*</span>
           </label>
           <input
             type="number"
             name="maxSupply"
             value={formData.maxSupply}
             onChange={handleChange}
-            placeholder="10"
+            placeholder="Например: 100"
             required
             min="1"
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-emerald-500"
+            className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-md 
+              focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500
+              placeholder:text-gray-400"
           />
           <p className="mt-1 text-xs text-gray-500">
-            Сколько токенов будет доступно для покупки
+            💡 На сколько частей разделить объект (например, 100 токенов = 100 частей)
           </p>
         </div>
 
-        {/* Цена за токен */}
+        {/* Цена */}
         <div>
-          <label className="block text-sm font-medium mb-2">
-            Цена за 1 токен (USDT) *
+          <label className="block text-sm font-semibold text-gray-900 mb-2">
+            💰 Цена за 1 токен (USDT) <span className="text-red-500">*</span>
           </label>
           <input
             type="number"
             name="pricePerToken"
             value={formData.pricePerToken}
             onChange={handleChange}
-            placeholder="1.0"
+            placeholder="Например: 1.00"
             required
             min="0.01"
             step="0.01"
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-emerald-500"
+            className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-md 
+              focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500
+              placeholder:text-gray-400"
           />
           <p className="mt-1 text-xs text-gray-500">
-            Стоимость одного токена в USDT
+            💡 Цена одного токена в USDT (стейблкоин = $1)
           </p>
+          {formData.maxSupply && formData.pricePerToken && (
+            <p className="mt-2 text-sm font-medium text-emerald-600">
+              📊 Общая стоимость объекта: {(parseInt(formData.maxSupply) * parseFloat(formData.pricePerToken)).toFixed(2)} USDT
+            </p>
+          )}
         </div>
 
         {/* Описание */}
         <div>
-          <label className="block text-sm font-medium mb-2">
-            Описание
+          <label className="block text-sm font-semibold text-gray-900 mb-2">
+            📝 Описание объекта
           </label>
           <textarea
             name="description"
             value={formData.description}
             onChange={handleChange}
-            placeholder="Уютный дом с видом на море..."
+            placeholder="Уютный дом с видом на море, 3 спальни, терраса..."
             rows={4}
-            className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-emerald-500"
+            className="w-full px-4 py-3 text-gray-900 bg-white border border-gray-300 rounded-md 
+              focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500
+              placeholder:text-gray-400"
           />
+          <p className="mt-1 text-xs text-gray-500">
+            💡 Опишите преимущества объекта для инвесторов
+          </p>
         </div>
 
-        {/* Кнопка отправки */}
-        <button
-          type="submit"
-          disabled={!isConnected || isCreating || isSaving}
-          className="w-full py-3 px-6 bg-emerald-600 text-white rounded-md font-semibold
-            hover:bg-emerald-700 disabled:bg-gray-300 disabled:cursor-not-allowed
-            transition-colors"
-        >
-          {isCreating 
-            ? '⏳ Создание токена...'
-            : isSaving
-            ? '💾 Сохранение...'
-            : isConfirmed
-            ? '✅ Актив создан!'
-            : 'Создать актив'}
-        </button>
+        {/* Кнопки */}
+        <div className="flex gap-3">
+          <button
+            type="submit"
+            disabled={!isConnected || isCreating || isSaving}
+            className="flex-1 py-4 px-6 bg-emerald-600 text-white text-lg font-semibold rounded-md
+              hover:bg-emerald-700 disabled:bg-gray-400 disabled:cursor-not-allowed
+              transition-all shadow-lg hover:shadow-xl"
+          >
+            {isCreating 
+              ? '⏳ Создание токена...'
+              : isSaving
+              ? '💾 Сохранение...'
+              : isConfirmed
+              ? '✅ Готово!'
+              : '🚀 Создать актив'}
+          </button>
+
+          {(isConfirmed || error) && (
+            <button
+              type="button"
+              onClick={handleReset}
+              className="px-6 py-4 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300"
+            >
+              Сбросить
+            </button>
+          )}
+        </div>
+
+        {/* Предупреждение */}
+        {!isConnected && (
+          <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-md">
+            <p className="text-sm text-yellow-800">
+              ⚠️ Подключите кошелёк MetaMask для создания актива
+            </p>
+          </div>
+        )}
 
         {/* Статус транзакции */}
         {txHash && (
-          <div className="p-4 bg-blue-50 rounded-md">
-            <p className="text-sm font-medium mb-1">Транзакция отправлена</p>
+          <div className="p-4 bg-blue-50 border border-blue-200 rounded-md">
+            <p className="text-sm font-medium text-blue-900 mb-2">
+              📡 Транзакция отправлена
+            </p>
             <a
               href={`https://sepolia.etherscan.io/tx/${txHash}`}
               target="_blank"
@@ -351,10 +422,12 @@ export function AssetCreateForm() {
           </div>
         )}
 
-        {/* Адрес нового токена */}
+        {/* Адрес токена */}
         {newTokenAddress && (
-          <div className="p-4 bg-green-50 rounded-md">
-            <p className="text-sm font-medium mb-1">Адрес нового токена</p>
+          <div className="p-4 bg-green-50 border border-green-200 rounded-md">
+            <p className="text-sm font-medium text-green-900 mb-2">
+              🎉 Токен создан!
+            </p>
             <a
               href={`https://sepolia.etherscan.io/address/${newTokenAddress}`}
               target="_blank"
@@ -363,12 +436,16 @@ export function AssetCreateForm() {
             >
               {newTokenAddress}
             </a>
+            <p className="text-xs text-green-700 mt-2">
+              Перенаправление на страницу активов...
+            </p>
           </div>
         )}
 
         {/* Ошибка */}
         {error && (
-          <div className="p-4 bg-red-50 rounded-md">
+          <div className="p-4 bg-red-50 border border-red-200 rounded-md">
+            <p className="text-sm font-medium text-red-900 mb-1">❌ Ошибка</p>
             <p className="text-sm text-red-800">{error.message}</p>
           </div>
         )}

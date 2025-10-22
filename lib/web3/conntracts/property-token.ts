@@ -1,19 +1,16 @@
 // File: @/lib/web3/contracts/property-token.ts
-// Описание: ABI контракта PropertyToken для токенизации недвижимости
-// Упрощённая версия на основе SettleMint ATKDeposit
-// Используется для mint, transfer, balanceOf и других операций с токенами
-
+// ИСПРАВЛЕНО: pricePerToken → pricePerTokenUSDT, обновлён getTokenInfo
 
 /**
  * ABI PropertyToken контракта
  * Функции:
- * - mint: Создание токенов (только MINTER_ROLE)
+ * - mint: Создание токенов (только owner)
  * - transfer: Перевод токенов
  * - balanceOf: Проверка баланса
  * - totalSupply: Общий выпуск
  * - remainingSupply: Оставшиеся токены
  * - pause/unpause: Экстренная остановка
- * - updatePrice: Обновление цены (только admin)
+ * - updatePrice: Обновление цены (только owner)
  */
 export const propertyTokenABI = [
   // Read Functions
@@ -61,7 +58,7 @@ export const propertyTokenABI = [
   },
   {
     type: 'function',
-    name: 'pricePerToken',
+    name: 'pricePerTokenUSDT',  // ✅ ИСПРАВЛЕНО
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'uint256', name: '' }],
@@ -72,6 +69,34 @@ export const propertyTokenABI = [
     stateMutability: 'view',
     inputs: [],
     outputs: [{ type: 'string', name: '' }],
+  },
+  {
+    type: 'function',
+    name: 'imageURI',  // ✅ ДОБАВЛЕНО
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'string', name: '' }],
+  },
+  {
+    type: 'function',
+    name: 'owner',  // ✅ ДОБАВЛЕНО
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address', name: '' }],
+  },
+  {
+    type: 'function',
+    name: 'treasury',  // ✅ ДОБАВЛЕНО
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address', name: '' }],
+  },
+  {
+    type: 'function',
+    name: 'usdt',  // ✅ ДОБАВЛЕНО
+    stateMutability: 'view',
+    inputs: [],
+    outputs: [{ type: 'address', name: '' }],
   },
   {
     type: 'function',
@@ -97,20 +122,24 @@ export const propertyTokenABI = [
       { type: 'string', name: '_symbol' },
       { type: 'uint256', name: '_totalSupply' },
       { type: 'uint256', name: '_maxSupply' },
-      { type: 'uint256', name: '_pricePerToken' },
+      { type: 'uint256', name: '_pricePerTokenUSDT' },  // ✅ ИСПРАВЛЕНО
       { type: 'string', name: '_description' },
+      { type: 'string', name: '_imageURI' },  // ✅ ДОБАВЛЕНО
       { type: 'bool', name: '_paused' },
+      { type: 'address', name: '_usdt' },  // ✅ ДОБАВЛЕНО
+      { type: 'address', name: '_treasury' },  // ✅ ДОБАВЛЕНО
+      { type: 'address', name: '_owner' },  // ✅ ДОБАВЛЕНО
     ],
   },
   {
     type: 'function',
-    name: 'hasRole',
+    name: 'allowance',
     stateMutability: 'view',
     inputs: [
-      { type: 'bytes32', name: 'role' },
-      { type: 'address', name: 'account' },
+      { type: 'address', name: 'owner' },
+      { type: 'address', name: 'spender' },
     ],
-    outputs: [{ type: 'bool', name: '' }],
+    outputs: [{ type: 'uint256', name: '' }],
   },
   
   // Write Functions
@@ -123,6 +152,13 @@ export const propertyTokenABI = [
       { type: 'uint256', name: 'amount' },
     ],
     outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'buy',  // ✅ ДОБАВЛЕНО
+    stateMutability: 'nonpayable',
+    inputs: [{ type: 'uint256', name: 'amountTokens' }],
+    outputs: [{ type: 'uint256', name: 'usdtPaid' }],
   },
   {
     type: 'function',
@@ -157,16 +193,26 @@ export const propertyTokenABI = [
   },
   {
     type: 'function',
-    name: 'burn',
+    name: 'updatePrice',
     stateMutability: 'nonpayable',
-    inputs: [{ type: 'uint256', name: 'amount' }],
+    inputs: [{ type: 'uint256', name: 'newPricePerTokenUSDT' }],
     outputs: [],
   },
   {
     type: 'function',
-    name: 'updatePrice',
+    name: 'setTreasury',  // ✅ ДОБАВЛЕНО
     stateMutability: 'nonpayable',
-    inputs: [{ type: 'uint256', name: 'newPrice' }],
+    inputs: [{ type: 'address', name: 'newTreasury' }],
+    outputs: [],
+  },
+  {
+    type: 'function',
+    name: 'setMetadata',  // ✅ ДОБАВЛЕНО
+    stateMutability: 'nonpayable',
+    inputs: [
+      { type: 'string', name: '_imageURI' },
+      { type: 'string', name: '_description' },
+    ],
     outputs: [],
   },
   {
@@ -223,6 +269,16 @@ export const propertyTokenABI = [
   },
   {
     type: 'event',
+    name: 'Bought',  // ✅ ДОБАВЛЕНО
+    inputs: [
+      { type: 'address', indexed: true, name: 'buyer' },
+      { type: 'uint256', indexed: false, name: 'tokens' },
+      { type: 'uint256', indexed: false, name: 'usdtPaid' },
+      { type: 'uint256', indexed: false, name: 'timestamp' },
+    ],
+  },
+  {
+    type: 'event',
     name: 'Paused',
     inputs: [{ type: 'address', indexed: false, name: 'account' }],
   },
@@ -231,17 +287,25 @@ export const propertyTokenABI = [
     name: 'Unpaused',
     inputs: [{ type: 'address', indexed: false, name: 'account' }],
   },
+  {
+    type: 'event',
+    name: 'TreasuryChanged',  // ✅ ДОБАВЛЕНО
+    inputs: [
+      { type: 'address', indexed: false, name: 'oldTreasury' },
+      { type: 'address', indexed: false, name: 'newTreasury' },
+    ],
+  },
+  {
+    type: 'event',
+    name: 'MetadataUpdated',  // ✅ ДОБАВЛЕНО
+    inputs: [
+      { type: 'string', indexed: false, name: 'imageURI' },
+      { type: 'string', indexed: false, name: 'description' },
+    ],
+  },
 ] as const
 
-// Типы для TypeScript
 export type PropertyTokenABI = typeof propertyTokenABI
-
-// Role константы (для проверки прав доступа)
-export const PROPERTY_TOKEN_ROLES = {
-  DEFAULT_ADMIN_ROLE: '0x0000000000000000000000000000000000000000000000000000000000000000' as const,
-  MINTER_ROLE: '0x9f2df0fed2c77648de5860a4cc508cd0818c85b8b8a1ab4ceeef8d981c8956a6' as const, // keccak256("MINTER_ROLE")
-  PAUSER_ROLE: '0x65d7a28e3265b37a6474929f336521b332c1681b933f6cb9f3376673440d862a' as const, // keccak256("PAUSER_ROLE")
-} as const
 
 // Helper функция для форматирования токенов (18 decimals → человеческий формат)
 export function formatTokenAmount(amount: bigint, decimals: number = 18): string {

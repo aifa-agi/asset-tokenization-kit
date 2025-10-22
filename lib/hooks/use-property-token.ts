@@ -1,40 +1,61 @@
-// File: @/hooks/use-property-token.ts
-// Описание: React хук для работы с PropertyToken контрактом
-// Предоставляет функции: mint, transfer, balanceOf, totalSupply, pricePerToken
-// Использует wagmi v2 API для чтения и записи в контракт
-
+// File: @/lib/hooks/use-property-token.ts
+// ДОБАВЛЕНО: approve USDT и buy функция
 
 import { useAccount, useReadContract, useWriteContract, useWaitForTransactionReceipt } from 'wagmi'
 import { Address, parseUnits, formatUnits } from 'viem'
 import { useState, useEffect } from 'react'
 import { formatTokenAmount, parseTokenAmount, propertyTokenABI } from '../web3/conntracts/property-token'
+import { CONTRACTS } from '../web3/conntracts/addresses'
 
-/**
- * Хук для работы с PropertyToken контрактом
- * @param tokenAddress - Адрес контракта PropertyToken (0x...)
- * @returns Объект с функциями и данными токена
- */
+// Minimal MockUSDT ABI для approve
+const mockUsdtABI = [
+  {
+    type: 'function',
+    name: 'approve',
+    stateMutability: 'nonpayable',
+    inputs: [
+      { type: 'address', name: 'spender' },
+      { type: 'uint256', name: 'amount' },
+    ],
+    outputs: [{ type: 'bool', name: '' }],
+  },
+  {
+    type: 'function',
+    name: 'balanceOf',
+    stateMutability: 'view',
+    inputs: [{ type: 'address', name: 'account' }],
+    outputs: [{ type: 'uint256', name: '' }],
+  },
+  {
+    type: 'function',
+    name: 'allowance',
+    stateMutability: 'view',
+    inputs: [
+      { type: 'address', name: 'owner' },
+      { type: 'address', name: 'spender' },
+    ],
+    outputs: [{ type: 'uint256', name: '' }],
+  },
+] as const
+
 export function usePropertyToken(tokenAddress: Address) {
   const { address: userAddress } = useAccount()
   const [txHash, setTxHash] = useState<`0x${string}` | undefined>()
   
   // ==================== READ FUNCTIONS ====================
   
-  // 1. Имя токена
   const { data: name } = useReadContract({
     address: tokenAddress,
     abi: propertyTokenABI,
     functionName: 'name',
   })
   
-  // 2. Символ токена
   const { data: symbol } = useReadContract({
     address: tokenAddress,
     abi: propertyTokenABI,
     functionName: 'symbol',
   })
   
-  // 3. Баланс пользователя
   const { 
     data: balance, 
     isLoading: isBalanceLoading,
@@ -46,11 +67,10 @@ export function usePropertyToken(tokenAddress: Address) {
     args: userAddress ? [userAddress] : undefined,
     query: { 
       enabled: !!userAddress,
-      staleTime: 30_000, // Кэш 30 секунд
+      staleTime: 30_000,
     },
   })
   
-  // 4. Общий выпуск токенов
   const { 
     data: totalSupply,
     refetch: refetchTotalSupply 
@@ -61,28 +81,24 @@ export function usePropertyToken(tokenAddress: Address) {
     query: { staleTime: 30_000 },
   })
   
-  // 5. Максимальное количество токенов
   const { data: maxSupply } = useReadContract({
     address: tokenAddress,
     abi: propertyTokenABI,
     functionName: 'maxSupply',
   })
   
-  // 6. Цена за токен
   const { data: pricePerToken } = useReadContract({
     address: tokenAddress,
     abi: propertyTokenABI,
-    functionName: 'pricePerToken',
+    functionName: 'pricePerTokenUSDT',
   })
   
-  // 7. Описание актива
   const { data: assetDescription } = useReadContract({
     address: tokenAddress,
     abi: propertyTokenABI,
     functionName: 'assetDescription',
   })
   
-  // 8. Оставшиеся токены для продажи
   const { 
     data: remainingSupply,
     refetch: refetchRemainingSupply 
@@ -93,14 +109,12 @@ export function usePropertyToken(tokenAddress: Address) {
     query: { staleTime: 30_000 },
   })
   
-  // 9. Статус паузы
   const { data: isPaused } = useReadContract({
     address: tokenAddress,
     abi: propertyTokenABI,
     functionName: 'paused',
   })
   
-  // 10. Вся информация одним запросом
   const { 
     data: tokenInfo,
     isLoading: isTokenInfoLoading 
@@ -108,6 +122,24 @@ export function usePropertyToken(tokenAddress: Address) {
     address: tokenAddress,
     abi: propertyTokenABI,
     functionName: 'getTokenInfo',
+  })
+
+  // ✅ НОВОЕ: Чтение баланса USDT
+  const { data: usdtBalance, refetch: refetchUsdtBalance } = useReadContract({
+    address: CONTRACTS.mockUSDT,
+    abi: mockUsdtABI,
+    functionName: 'balanceOf',
+    args: userAddress ? [userAddress] : undefined,
+    query: { enabled: !!userAddress },
+  })
+
+  // ✅ НОВОЕ: Проверка allowance
+  const { data: usdtAllowance, refetch: refetchAllowance } = useReadContract({
+    address: CONTRACTS.mockUSDT,
+    abi: mockUsdtABI,
+    functionName: 'allowance',
+    args: userAddress ? [userAddress, tokenAddress] : undefined,
+    query: { enabled: !!userAddress },
   })
   
   // ==================== WRITE FUNCTIONS ====================
@@ -118,7 +150,6 @@ export function usePropertyToken(tokenAddress: Address) {
     error: writeError 
   } = useWriteContract()
   
-  // Ожидание подтверждения транзакции
   const { 
     isLoading: isConfirming,
     isSuccess: isConfirmed,
@@ -127,25 +158,60 @@ export function usePropertyToken(tokenAddress: Address) {
     hash: txHash,
   })
   
-  // Автообновление балансов после подтверждения
   useEffect(() => {
     if (isConfirmed) {
       refetchBalance()
       refetchTotalSupply()
       refetchRemainingSupply()
+      refetchUsdtBalance()
+      refetchAllowance()
       
-      // Сброс txHash через 3 секунды
       setTimeout(() => setTxHash(undefined), 3000)
     }
-  }, [isConfirmed, refetchBalance, refetchTotalSupply, refetchRemainingSupply])
+  }, [isConfirmed, refetchBalance, refetchTotalSupply, refetchRemainingSupply, refetchUsdtBalance, refetchAllowance])
+  
+  // ==================== APPROVE USDT ====================
+  
+  const approveUSDT = async (amount: bigint) => {
+    try {
+      const hash = await writeContractAsync({
+        address: CONTRACTS.mockUSDT,
+        abi: mockUsdtABI,
+        functionName: 'approve',
+        args: [tokenAddress, amount],
+      })
+      
+      setTxHash(hash)
+      return hash
+    } catch (error) {
+      console.error('Approve error:', error)
+      throw error
+    }
+  }
+
+  // ==================== BUY FUNCTION ====================
+  
+  const buy = async (amount: string) => {
+    try {
+      const amountInWei = parseTokenAmount(amount)
+      
+      const hash = await writeContractAsync({
+        address: tokenAddress,
+        abi: propertyTokenABI,
+        functionName: 'buy',
+        args: [amountInWei],
+      })
+      
+      setTxHash(hash)
+      return hash
+    } catch (error) {
+      console.error('Buy error:', error)
+      throw error
+    }
+  }
   
   // ==================== MINT FUNCTION ====================
   
-  /**
-   * Создать (mint) токены
-   * @param to - Адрес получателя
-   * @param amount - Количество токенов (в human-readable формате, например "10")
-   */
   const mint = async (to: Address, amount: string) => {
     try {
       const amountInWei = parseTokenAmount(amount)
@@ -167,11 +233,6 @@ export function usePropertyToken(tokenAddress: Address) {
   
   // ==================== TRANSFER FUNCTION ====================
   
-  /**
-   * Перевести токены другому адресу
-   * @param to - Адрес получателя
-   * @param amount - Количество токенов (в human-readable формате)
-   */
   const transfer = async (to: Address, amount: string) => {
     try {
       const amountInWei = parseTokenAmount(amount)
@@ -191,36 +252,8 @@ export function usePropertyToken(tokenAddress: Address) {
     }
   }
   
-  // ==================== BURN FUNCTION ====================
-  
-  /**
-   * Сжечь (burn) токены
-   * @param amount - Количество токенов для сжигания
-   */
-  const burn = async (amount: string) => {
-    try {
-      const amountInWei = parseTokenAmount(amount)
-      
-      const hash = await writeContractAsync({
-        address: tokenAddress,
-        abi: propertyTokenABI,
-        functionName: 'burn',
-        args: [amountInWei],
-      })
-      
-      setTxHash(hash)
-      return hash
-    } catch (error) {
-      console.error('Burn error:', error)
-      throw error
-    }
-  }
-  
   // ==================== PAUSE FUNCTIONS ====================
   
-  /**
-   * Приостановить все операции (только PAUSER_ROLE)
-   */
   const pause = async () => {
     try {
       const hash = await writeContractAsync({
@@ -237,9 +270,6 @@ export function usePropertyToken(tokenAddress: Address) {
     }
   }
   
-  /**
-   * Возобновить операции (только PAUSER_ROLE)
-   */
   const unpause = async () => {
     try {
       const hash = await writeContractAsync({
@@ -258,13 +288,9 @@ export function usePropertyToken(tokenAddress: Address) {
   
   // ==================== UPDATE PRICE ====================
   
-  /**
-   * Обновить цену за токен (только DEFAULT_ADMIN_ROLE)
-   * @param newPrice - Новая цена в USDT (в wei)
-   */
   const updatePrice = async (newPrice: string) => {
     try {
-      const priceInWei = parseUnits(newPrice, 6) // USDT имеет 6 decimals
+      const priceInWei = parseUnits(newPrice, 6)
       
       const hash = await writeContractAsync({
         address: tokenAddress,
@@ -283,12 +309,20 @@ export function usePropertyToken(tokenAddress: Address) {
   
   // ==================== FORMATTED DATA ====================
   
-  // Форматированные значения для отображения в UI
   const formattedBalance = balance ? formatTokenAmount(balance) : '0'
   const formattedTotalSupply = totalSupply ? formatTokenAmount(totalSupply) : '0'
   const formattedMaxSupply = maxSupply ? formatTokenAmount(maxSupply) : '0'
   const formattedRemainingSupply = remainingSupply ? formatTokenAmount(remainingSupply) : '0'
-  const formattedPricePerToken = pricePerToken ? formatUnits(pricePerToken, 6) : '0' // USDT 6 decimals
+  const formattedPricePerToken = pricePerToken ? formatUnits(pricePerToken, 6) : '0'
+  const formattedUsdtBalance = usdtBalance ? formatUnits(usdtBalance, 6) : '0'
+  const formattedUsdtAllowance = usdtAllowance ? formatUnits(usdtAllowance, 6) : '0'
+  
+  console.log('🔍 [use-property-token] PRICE DEBUG:', {
+    contract: tokenAddress.slice(0, 10) + '...',
+    raw: pricePerToken?.toString(),
+    formatted: formattedPricePerToken,
+    decimals: 6,
+  })
   
   // ==================== RETURN ====================
   
@@ -304,6 +338,8 @@ export function usePropertyToken(tokenAddress: Address) {
     maxSupply,
     remainingSupply,
     pricePerToken,
+    usdtBalance,
+    usdtAllowance,
     
     // Форматированные балансы
     formattedBalance,
@@ -311,6 +347,8 @@ export function usePropertyToken(tokenAddress: Address) {
     formattedMaxSupply,
     formattedRemainingSupply,
     formattedPricePerToken,
+    formattedUsdtBalance,
+    formattedUsdtAllowance,
     
     // Полная информация
     tokenInfo,
@@ -320,9 +358,10 @@ export function usePropertyToken(tokenAddress: Address) {
     isLoading: isBalanceLoading || isTokenInfoLoading,
     
     // Функции записи
+    approveUSDT,
+    buy,
     mint,
     transfer,
-    burn,
     pause,
     unpause,
     updatePrice,
@@ -341,8 +380,9 @@ export function usePropertyToken(tokenAddress: Address) {
     refetchBalance,
     refetchTotalSupply,
     refetchRemainingSupply,
+    refetchUsdtBalance,
+    refetchAllowance,
   }
 }
 
-// TypeScript типы для возвращаемого значения
 export type UsePropertyTokenReturn = ReturnType<typeof usePropertyToken>

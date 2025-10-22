@@ -1,389 +1,350 @@
-// File: @/app/architect/deploy/page.tsx
-// ИСПРАВЛЕННАЯ ВЕРСИЯ - добавлен args параметр
-
+// File: app/architect/deploy/page.tsx
+// Root deploy page refactored to use decomposed components.
 
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useWeb3Status } from '@/providers/web-3-provider'
-import { useDeployContract, usePublicClient } from 'wagmi'
+import { useBalance, usePublicClient } from 'wagmi'
 import { sepolia } from 'wagmi/chains'
+import type { PublicClient, WalletClient } from 'viem'
+import { formatEther } from 'viem'
 import { toast } from 'sonner'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import {
-  Loader2,
-  Rocket,
-  CheckCircle,
-  AlertCircle,
-  ExternalLink,
-} from 'lucide-react'
 
+// Components
+import WalletGuard from './(_components)/wallet-guard'
+import BalanceCard from './(_components)/balance-card'
+import ContractsList from './(_components)/contracts-list'
+import DeployProgress, { type DeployStepStatus } from './(_components)/deploy-progress'
+import StepEstimate, { type StepEstimateResult } from './(_components)/step-estimate'
+import StepApproval from './(_components)/step-approval'
+import StepConfirm, { type StepConfirmResult } from './(_components)/step-confirm'
+import StepSaveAddress from './(_components)/step-save-address'
+import ErrorCard from './(_components)/error-card'
+
+// Types
 interface CompiledContract {
   name: string
   abi: any[]
   bytecode: string
 }
 
-type DeployStatus = 'idle' | 'loading' | 'deploying' | 'confirming' | 'success' | 'error'
+type DeployPhase =
+  | 'idle'
+  | 'estimating'
+  | 'awaiting_approval'
+  | 'deploying'
+  | 'confirming'
+  | 'saving'
+  | 'success'
+  | 'error'
 
+// Page component
 export default function ArchitectDeployPage() {
-  const { address, isConnected, chainId, switchToSepolia } = useWeb3Status()
+  const { address, isConnected, chainId, switchToSepolia, walletClient } = useWeb3Status()
   const publicClient = usePublicClient()
+
+  const { data: balance } = useBalance({
+    address: address || undefined,
+    chainId: sepolia.id,
+  })
 
   const [contracts, setContracts] = useState<CompiledContract[]>([])
   const [loadingContracts, setLoadingContracts] = useState(true)
-  const [deployStatus, setDeployStatus] = useState<DeployStatus>('idle')
-  const [currentContract, setCurrentContract] = useState<string | null>(null)
-  const [deployedAddresses, setDeployedAddresses] = useState<Record<string, string>>({})
+
+  const [phase, setPhase] = useState<DeployPhase>('idle')
+  const [currentName, setCurrentName] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  // Загрузка скомпилированных контрактов из GitHub
+  const [gasEstimate, setGasEstimate] = useState<bigint | null>(null)
+  const [gasPrice, setGasPrice] = useState<bigint | null>(null)
+  const estimatedCost = useMemo(() => {
+    if (gasEstimate == null || gasPrice == null) return null
+    return gasEstimate * gasPrice
+  }, [gasEstimate, gasPrice])
+
+  const [txHash, setTxHash] = useState<`0x${string}` | null>(null)
+  const [confirmed, setConfirmed] = useState<StepConfirmResult | null>(null)
+  const [deployed, setDeployed] = useState<Record<string, `0x${string}`>>({})
+
+  // Load compiled contracts once
   useEffect(() => {
-    loadCompiledContracts()
+    void loadCompiledContracts()
   }, [])
 
-  const loadCompiledContracts = async () => {
+  async function loadCompiledContracts() {
+    setLoadingContracts(true)
     try {
-      setLoadingContracts(true)
-
-      // Загружаем список контрактов
-      const contractNames = ['PropertyTokenFactory', 'MockUSDT']
-      const loadedContracts: CompiledContract[] = []
-
-      for (const name of contractNames) {
+      const names = ['PropertyTokenFactory', 'MockUSDT']
+      const list: CompiledContract[] = []
+      for (const name of names) {
         try {
-          const response = await fetch(`/api/contracts/compiled/${name}`)
-
-          if (response.ok) {
-            const contract = await response.json()
-            loadedContracts.push(contract)
+          const res = await fetch(`/api/contracts/compiled/${name}`)
+          if (res.ok) {
+            const json = await res.json()
+            list.push(json)
           }
-        } catch (e) {
-          console.warn(`Failed to load ${name}`)
+        } catch {
+          // ignore
         }
       }
-
-      setContracts(loadedContracts)
-      console.log('✅ Loaded contracts:', loadedContracts.length)
-
-    } catch (err: any) {
-      console.error('Failed to load contracts:', err)
-      toast.error('Failed to load compiled contracts')
+      setContracts(list)
+    } catch (e) {
+      setError('Failed to load compiled contracts')
     } finally {
       setLoadingContracts(false)
     }
   }
 
-  // Deploy контракта через wagmi
-  const { deployContractAsync } = useDeployContract()
+  // Steps representation for DeployProgress
+  const steps: { step: number; label: string; status: DeployStepStatus }[] = [
+    { step: 1, label: 'Estimating gas', status: mapPhase('estimating', phase) },
+    { step: 2, label: 'Awaiting approval', status: mapPhase('awaiting_approval', phase) },
+    { step: 3, label: 'Sending transaction', status: mapPhase('deploying', phase) },
+    { step: 4, label: 'Confirming on blockchain', status: mapPhase('confirming', phase) },
+    { step: 5, label: 'Saving address', status: mapPhase('saving', phase) },
+  ]
 
-  const deployContract = async (contract: CompiledContract) => {
+  function mapPhase(target: DeployPhase, current: DeployPhase): DeployStepStatus {
+    const order: DeployPhase[] = [
+      'idle',
+      'estimating',
+      'awaiting_approval',
+      'deploying',
+      'confirming',
+      'saving',
+      'success',
+      'error',
+    ]
+    const t = order.indexOf(target)
+    const c = order.indexOf(current)
+    if (c < 0 || t < 0) return 'pending'
+    if (c === t) return current === 'error' ? 'error' : 'active'
+    if (c > t || current === 'success') return 'complete'
+    return 'pending'
+  }
+
+  const hasBalance = (balance?.value ?? 0n) > 0n
+  const allDeployed = contracts.length > 0 && contracts.every(c => deployed[c.name])
+
+  // Orchestration handlers
+  function startDeploy(name: string) {
+    const found = contracts.find(c => c.name === name)
+    if (!found) return
+
+    // guards
     if (!isConnected || !address) {
       toast.error('Please connect your wallet')
       return
     }
-
     if (chainId !== sepolia.id) {
-      toast.error('Please switch to Sepolia network', {
-        action: {
-          label: 'Switch',
-          onClick: () => switchToSepolia(),
-        },
+      toast.error('Please switch to Sepolia', {
+        action: { label: 'Switch', onClick: () => switchToSepolia() },
       })
       return
     }
+    if (!publicClient) {
+      toast.error('Public client not initialized')
+      return
+    }
+    if (!walletClient) {
+      toast.error('Wallet client not available. Please reconnect.')
+      return
+    }
+    if (!hasBalance) {
+      toast.error('Insufficient balance for gas')
+      return
+    }
 
-    setCurrentContract(contract.name)
-    setDeployStatus('deploying')
+    // reset state
+    setCurrentName(found.name)
     setError(null)
+    setPhase('estimating')
+    setGasEstimate(null)
+    setGasPrice(null)
+    setTxHash(null)
+    setConfirmed(null)
+  }
 
-    const toastId = toast.loading(`Deploying ${contract.name}...`)
+  function onEstimated(res: StepEstimateResult) {
+    setGasEstimate(res.gasEstimate)
+    setGasPrice(res.gasPrice)
+    setPhase('awaiting_approval')
+  }
 
-    try {
-      console.log(`🚀 Deploying ${contract.name}...`)
+  function onApprovalSent(hash: `0x${string}`) {
+    setTxHash(hash)
+    setPhase('deploying') // immediately after sending we consider deploy tx “sent”
+    // small UX nudge to move into confirming
+    setPhase('confirming')
+  }
 
-      // ✅ ИСПРАВЛЕНО: Добавлен args параметр (пустой массив если нет конструктора)
-      const hash = await deployContractAsync({
-        abi: contract.abi,
-        bytecode: contract.bytecode as `0x${string}`,
-        args: [], // ✅ Обязательный параметр для wagmi v2
-      })
+  function onConfirmed(res: StepConfirmResult) {
+    setConfirmed(res)
+    setPhase('saving')
+  }
 
-      console.log(`📤 Transaction sent: ${hash}`)
+  async function onSaved() {
+    if (!currentName || !confirmed?.contractAddress) return
+    setDeployed(prev => ({ ...prev, [currentName]: confirmed.contractAddress }))
+    setPhase('success')
+    toast.success(`${currentName} deployed! Cost: ${formatEther(confirmed.actualCost)} ETH`)
+  }
 
-      toast.success('Transaction sent!', { id: toastId })
-      toast.loading('Waiting for confirmation...', { id: 'confirm' })
-
-      setDeployStatus('confirming')
-
-      // Ждём подтверждения
-      const receipt = await publicClient?.waitForTransactionReceipt({
-        hash,
-        confirmations: 1,
-      })
-
-      if (!receipt) {
-        throw new Error('Receipt not found')
-      }
-
-      const contractAddress = receipt.contractAddress
-
-      if (!contractAddress) {
-        throw new Error('Contract address not found in receipt')
-      }
-
-      console.log(`✅ ${contract.name} deployed: ${contractAddress}`)
-
-      // Сохраняем адрес
-      setDeployedAddresses(prev => ({
-        ...prev,
-        [contract.name]: contractAddress,
-      }))
-
-      toast.success(`${contract.name} deployed successfully!`, { id: 'confirm' })
-
-      setDeployStatus('success')
-
-      // Сохраняем адрес в .env через API
-      await saveContractAddress(contract.name, contractAddress)
-
-    } catch (err: any) {
-      console.error(`❌ Deploy error:`, err)
-
-      let errorMessage = err.message || 'Deployment failed'
-
-      if (err.message?.includes('User rejected')) {
-        errorMessage = 'Transaction rejected by user'
-      } else if (err.message?.includes('insufficient')) {
-        errorMessage = 'Insufficient funds for gas'
-      }
-
-      setError(errorMessage)
-      setDeployStatus('error')
-      toast.error(errorMessage, { id: toastId })
-      toast.dismiss('confirm')
+  async function deployAll() {
+    for (const c of contracts) {
+      if (deployed[c.name]) continue
+      startDeploy(c.name)
+      // wait until success/error
+      // polling the phase state is one simple approach for sequential deploy
+      await waitForFinish()
+      if (phase === 'error') break
     }
   }
 
-  // Сохранение адреса в .env через API
-  const saveContractAddress = async (contractName: string, address: string) => {
-    try {
-      const response = await fetch('/api/contracts/save-address', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ contractName, address }),
-      })
-
-      if (!response.ok) {
-        console.warn('Failed to save address to GitHub')
-      } else {
-        console.log('✅ Address saved to GitHub')
-      }
-    } catch (err) {
-      console.warn('Failed to save address:', err)
-    }
+  function waitForFinish() {
+    return new Promise<void>((resolve) => {
+      const iv = setInterval(() => {
+        if (phase === 'success' || phase === 'error' || phase === 'idle') {
+          clearInterval(iv)
+          resolve()
+        }
+      }, 200)
+    })
   }
 
-  // Deploy всех контрактов по очереди
-  const deployAll = async () => {
-    for (const contract of contracts) {
-      if (!deployedAddresses[contract.name]) {
-        await deployContract(contract)
-
-        // Пауза между деплоями
-        await new Promise(resolve => setTimeout(resolve, 2000))
-      }
-    }
-  }
-
-  // Проверка готовности
-  const allDeployed = contracts.every(c => deployedAddresses[c.name])
-
+  // Render
   return (
-    <div className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">
-          🚀 Deploy Contracts
-        </h1>
-        <p className="text-gray-600 mt-2">
-          Deploy smart contracts to Sepolia testnet via MetaMask
-        </p>
-      </div>
+    <div className="mx-auto max-w-5xl space-y-6 px-4 py-8">
+      <h1 className="text-3xl font-bold text-gray-900">🚀 Deploy Contracts</h1>
 
-      {/* Network Check */}
-      {isConnected && chainId !== sepolia.id && (
-        <Card className="bg-orange-50 border-orange-200">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="h-5 w-5 text-orange-600" />
+      <WalletGuard
+        className="space-y-6"
+        hint="Make sure you are on Sepolia and have some test ETH."
+      >
+        {/* Balance */}
+        <BalanceCard
+          balanceWei={balance?.value ?? null}
+          estimatedCostWei={estimatedCost ?? null}
+        />
+
+        {/* Progress */}
+        {currentName && phase !== 'idle' && (
+          <DeployProgress steps={steps} />
+        )}
+
+        {/* Contract list */}
+        {loadingContracts ? (
+          <div className="rounded-md border bg-white p-6 text-center text-sm text-gray-600">
+            Loading contracts…
+          </div>
+        ) : (
+          <ContractsList
+            items={contracts.map(c => ({
+              name: c.name,
+              bytecodeLength: (c.bytecode?.length ?? 0),
+              deployedAddress: deployed[c.name] ?? null,
+            }))}
+            isDeploying={['estimating','awaiting_approval','deploying','confirming','saving'].includes(phase)}
+            currentName={currentName}
+            disableDeploy={!isConnected || chainId !== sepolia.id || !hasBalance}
+            onDeployClick={startDeploy}
+          />
+        )}
+
+        {/* Orchestrated steps (render conditionally by phase) */}
+        {currentName && phase === 'estimating' && address && publicClient && (
+          <StepEstimate
+            address={address}
+            bytecode={normalize0x(contracts.find(c => c.name === currentName)?.bytecode)}
+            publicClient={publicClient as PublicClient}
+            onEstimated={onEstimated}
+            onError={(m) => { setError(m); setPhase('error') }}
+          />
+        )}
+
+        {currentName && phase === 'awaiting_approval' && walletClient && (
+          <StepApproval
+            walletClient={walletClient as WalletClient}
+            address={address as `0x${string}`}
+            abi={contracts.find(c => c.name === currentName)!.abi}
+            bytecode={normalize0x(contracts.find(c => c.name === currentName)!.bytecode)}
+            constructorArgs={[]} // ensure viem types are satisfied
+            publicClient={publicClient as PublicClient}
+            onSent={onApprovalSent}
+            onError={(m) => { setError(m); setPhase('error') }}
+          />
+        )}
+
+        {currentName && phase === 'confirming' && publicClient && txHash && (
+          <StepConfirm
+            publicClient={publicClient as PublicClient}
+            txHash={txHash}
+            confirmations={1}
+            timeoutMs={120_000}
+            onConfirmed={onConfirmed}
+            onError={(m) => { setError(m); setPhase('error') }}
+          />
+        )}
+
+        {currentName && phase === 'saving' && confirmed?.contractAddress && (
+          <StepSaveAddress
+  contractName={currentName}
+  address={confirmed.contractAddress}
+  onSaved={onSaved}
+  onError={(m: string) => { setError(m); setPhase('error') }}
+/>
+        )}
+
+        {/* Deploy all */}
+        {contracts.length > 0 && !allDeployed && hasBalance && chainId === sepolia.id && (
+          <button
+            type="button"
+            onClick={deployAll}
+            disabled={['estimating','awaiting_approval','deploying','confirming','saving'].includes(phase)}
+            className={[
+              'w-full rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700',
+              ['estimating','awaiting_approval','deploying','confirming','saving'].includes(phase) ? 'opacity-50 cursor-not-allowed' : '',
+            ].join(' ')}
+          >
+            Deploy All ({contracts.length - Object.keys(deployed).length} remaining)
+          </button>
+        )}
+
+        {/* Error block */}
+        {error && (
+          <ErrorCard
+            message={error}
+            onRetry={() => {
+              setError(null)
+              if (currentName) setPhase('estimating')
+            }}
+          />
+        )}
+
+        {/* Success summary */}
+        {allDeployed && (
+          <div className="rounded-md border-2 border-green-300 bg-green-50 p-4">
+            <div className="flex items-start gap-3">
+              <svg className="h-6 w-6 text-green-600" viewBox="0 0 24 24" fill="none">
+                <path d="M20 6L9 17l-5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+              </svg>
               <div className="flex-1">
-                <p className="font-medium text-orange-900">Wrong Network</p>
-                <p className="text-sm text-orange-700">
-                  Please switch to Sepolia testnet
-                </p>
-              </div>
-              <Button onClick={switchToSepolia} variant="outline" size="sm">
-                Switch Network
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Contracts List */}
-      {loadingContracts ? (
-        <Card>
-          <CardContent className="py-8">
-            <div className="flex items-center justify-center gap-3">
-              <Loader2 className="h-5 w-5 animate-spin" />
-              <span>Loading compiled contracts...</span>
-            </div>
-          </CardContent>
-        </Card>
-      ) : contracts.length === 0 ? (
-        <Card>
-          <CardContent className="py-8 text-center">
-            <AlertCircle className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-            <p className="text-gray-600 mb-4">No compiled contracts found</p>
-            <Button onClick={() => window.location.href = '/architect/upload'}>
-              Upload Contracts
-            </Button>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="space-y-4">
-          {contracts.map((contract, index) => {
-            const isDeployed = !!deployedAddresses[contract.name]
-            const isCurrent = currentContract === contract.name
-
-            return (
-              <Card key={index}>
-                <CardHeader>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <CardTitle className="flex items-center gap-2">
-                        {contract.name}
-                        {isDeployed && (
-                          <CheckCircle className="h-5 w-5 text-green-600" />
-                        )}
-                      </CardTitle>
-                      <CardDescription>
-                        {isDeployed
-                          ? 'Deployed successfully'
-                          : 'Ready to deploy'}
-                      </CardDescription>
-                    </div>
-
-                    {!isDeployed && (
-                      <Button
-                        onClick={() => deployContract(contract)}
-                        disabled={
-                          !isConnected ||
-                          chainId !== sepolia.id ||
-                          deployStatus === 'deploying' ||
-                          deployStatus === 'confirming'
-                        }
-                      >
-                        {isCurrent && deployStatus === 'deploying' ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                            Deploying...
-                          </>
-                        ) : isCurrent && deployStatus === 'confirming' ? (
-                          <>
-                            <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                            Confirming...
-                          </>
-                        ) : (
-                          <>
-                            <Rocket className="h-4 w-4 mr-2" />
-                            Deploy
-                          </>
-                        )}
-                      </Button>
-                    )}
-                  </div>
-                </CardHeader>
-
-                {isDeployed && (
-                  <CardContent>
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="text-gray-600">Address:</span>
-                      <code className="bg-gray-100 px-2 py-1 rounded font-mono text-xs">
-                        {deployedAddresses[contract.name]}
-                      </code>
-                      <a
-                        href={`https://sepolia.etherscan.io/address/${deployedAddresses[contract.name]}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-blue-600 hover:underline"
-                      >
-                        <ExternalLink className="h-4 w-4" />
-                      </a>
-                    </div>
-                  </CardContent>
-                )}
-              </Card>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Deploy All Button */}
-      {contracts.length > 0 && !allDeployed && (
-        <Button
-          onClick={deployAll}
-          disabled={
-            !isConnected ||
-            chainId !== sepolia.id ||
-            deployStatus === 'deploying' ||
-            deployStatus === 'confirming'
-          }
-          className="w-full"
-          size="lg"
-        >
-          Deploy All Contracts
-        </Button>
-      )}
-
-      {/* Success Message */}
-      {allDeployed && (
-        <Card className="bg-green-50 border-green-200">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <CheckCircle className="h-6 w-6 text-green-600" />
-              <div>
-                <p className="font-medium text-green-900">
-                  All contracts deployed successfully!
-                </p>
-                <p className="text-sm text-green-700">
-                  Contract addresses saved to environment variables
+                <p className="text-lg font-bold text-green-900">All contracts deployed!</p>
+                <p className="text-sm text-green-800">
+                  Saved addresses and updated UI successfully.
                 </p>
               </div>
             </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Error */}
-      {error && (
-        <Card className="bg-red-50 border-red-200">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="h-5 w-5 text-red-600" />
-              <p className="text-sm text-red-800">{error}</p>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+          </div>
+        )}
+      </WalletGuard>
     </div>
   )
+}
+
+// Helpers
+function normalize0x(code?: string): `0x${string}` {
+  if (!code) return '0x' as `0x${string}`
+  return (code.startsWith('0x') ? code : `0x${code}`) as `0x${string}`
 }

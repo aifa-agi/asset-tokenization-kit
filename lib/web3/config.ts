@@ -1,14 +1,11 @@
 // File: @/lib/web3/config.ts
-// Описание: Финальная конфигурация (без изменений в логике).
-// Исправлена theme с правильными enum значениями для RainbowKit v2.2.9.
-// borderRadius теперь 'medium' (enum), а не string.
+// ИСПРАВЛЕНО: Возвращаем getDefaultConfig но с правильным transport
 
 import { getDefaultConfig } from '@rainbow-me/rainbowkit'
 import { sepolia } from 'wagmi/chains'
 import { http } from 'wagmi'
 import { QueryClient } from '@tanstack/react-query'
 
-// QueryClient для кэширования
 export const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -26,36 +23,39 @@ export const queryClient = new QueryClient({
   },
 })
 
-// Кастомный транспорт для Sepolia
-const createSepoliaTransport = () => {
+// Получаем RPC URL
+const getRpcUrl = () => {
   const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL
   if (rpcUrl) {
     console.log(`✅ Используется RPC: ${rpcUrl}`)
-    return http(rpcUrl)
+    return rpcUrl
   }
   
-  console.warn('⚠️ NEXT_PUBLIC_RPC_URL не установлен, используется публичный RPC Sepolia')
-  return http('https://rpc.sepolia.org')
+  console.warn('⚠️ NEXT_PUBLIC_RPC_URL не установлен')
+  return 'https://rpc.sepolia.org'
 }
 
-// Основная конфигурация
+// ✅ ИСПОЛЬЗУЕМ getDefaultConfig + кастомный transport
 export const config = getDefaultConfig({
   appName: 'Property Tokenization',
-  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID!,
+  projectId: process.env.NEXT_PUBLIC_WALLETCONNECT_PROJECT_ID || 'YOUR_PROJECT_ID',
   chains: [sepolia],
   ssr: true,
+  // ✅ ДОБАВЛЯЕМ кастомный transport с правильными настройками
   transports: {
-    [sepolia.id]: createSepoliaTransport(),
+    [sepolia.id]: http(getRpcUrl(), {
+      batch: true,
+      retryCount: 3,
+      retryDelay: 1000,
+    }),
   },
 })
 
-// ИСПРАВЛЕННАЯ тема для RainbowKit v2 (правильные enum значения)
 export const rainbowTheme = {
   lightMode: {
-    accentColor: '#10b981', // Emerald green
+    accentColor: '#10b981',
     accentColorForeground: '#ffffff',
-    // borderRadius теперь enum: 'small' | 'medium' | 'large' | 'none'
-    borderRadius: 'medium' as const, // Типизированное значение
+    borderRadius: 'medium' as const,
   },
   darkMode: {
     accentColor: '#10b981',
@@ -64,5 +64,4 @@ export const rainbowTheme = {
   },
 }
 
-// Типы
 export type { Config } from 'wagmi'

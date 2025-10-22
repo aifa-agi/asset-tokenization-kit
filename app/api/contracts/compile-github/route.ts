@@ -1,8 +1,4 @@
-// File: @/app/api/contracts/upload/route.ts
-// Описание: Сохранение .sol файлов в GitHub
-// Основан на вашем паттерне с GitHub API
-
-
+// File: @/app/api/contracts/compile-github/route.ts
 import { NextRequest, NextResponse } from 'next/server'
 
 interface ContractFile {
